@@ -1,59 +1,60 @@
-import { clamp } from './playback';
+// The <video> element is the playback clock. Actions seek it; everyone else reads it.
 
-let player = null;
+let video = null;
 let route = null;
-let pendingOffset = null;
+let held = null;
 
-export function attachMedia(nextPlayer, nextRoute) {
-  player = nextPlayer || null;
+export function attachVideo(nextVideo, nextRoute) {
+  video = nextVideo || null;
   route = nextRoute || null;
-  applyPendingSeek();
 }
 
-export function detachMedia(nextPlayer) {
-  if (nextPlayer && player !== nextPlayer) return;
-  player = null;
+export function detachVideo(nextVideo) {
+  if (nextVideo && video !== nextVideo) return;
+  video = null;
   route = null;
+  held = null;
 }
 
+export function setVideoRoute(nextRoute) {
+  route = nextRoute || null;
+}
+
+export function holdOffset(offsetMs) {
+  held = offsetMs;
+}
+
+export function releaseHold() {
+  held = null;
+}
+
+export function videoSeconds(offsetMs, videoStartOffset = 0, durationSeconds = Infinity) {
+  const seconds = Math.max(0, ((offsetMs || 0) - (videoStartOffset || 0)) / 1000);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return seconds;
+  return Math.min(seconds, Math.max(0, durationSeconds - 0.05));
+}
+
+export function clampToLoop(offset, loop) {
+  if (offset == null || !loop || loop.startTime == null) return offset;
+  const end = loop.startTime + loop.duration;
+  if (offset < loop.startTime) return loop.startTime;
+  if (offset > end) return end;
+  return offset;
+}
+
+// Route offset in ms. A seek that has not landed yet wins over a stale currentTime.
 export function mediaOffset() {
-  if (pendingOffset !== null) return pendingOffset;
-  if (!player || typeof player.getCurrentTime !== 'function') return null;
-  const seconds = player.getCurrentTime();
-  if (!Number.isFinite(seconds)) return null;
-  return (route?.videoStartOffset || 0) + (seconds * 1000);
-}
-
-export function seekMedia(offset) {
-  if (!Number.isFinite(offset)) return false;
-  pendingOffset = offset;
-  return applyPendingSeek();
-}
-
-function applyPendingSeek() {
-  if (pendingOffset === null || !player || typeof player.seekTo !== 'function') return false;
-  const duration = player.getDuration?.();
-  if (!Number.isFinite(duration) || duration <= 0) return false;
-
   const start = route?.videoStartOffset || 0;
-  const seconds = clamp((pendingOffset - start) / 1000, 0, Math.max(0, duration - 0.05));
-  player.seekTo(seconds, 'seconds');
-  pendingOffset = null;
-  return true;
+  const live = video && video.readyState >= 1 && Number.isFinite(video.currentTime)
+    ? start + (video.currentTime * 1000)
+    : null;
+  if (held != null && (live == null || video.seeking || Math.abs(live - held) > 250)) return held;
+  held = null;
+  return live;
 }
 
-export function hasMedia() {
-  return Boolean(player);
-}
-
-export function mediaErrorMessage(error) {
-  const detail = error?.message || error?.details || '';
-  const text = String(detail);
-  if (/manifest|level|network|frag|buffer|timeout|load/i.test(text)) {
-    return 'The video connection dropped. Check your network and try again.';
-  }
-  if (/decode|media/i.test(text)) {
-    return 'This browser could not decode the video. Try again, or open the drive in another browser.';
-  }
-  return 'The video stopped unexpectedly. Try again.';
+export function resetMediaForTests() {
+  video = null;
+  route = null;
+  held = null;
 }
